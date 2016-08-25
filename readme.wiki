@@ -1,0 +1,20 @@
+== Installing LXC on Debian Jessie (stable) as of August 2016 ==
+
+ apt install -y lxc bridge-utils
+ sed -i 's@MIRROR=${MIRROR:-http://http.debian.net/debian}@#&@' /usr/share/lxc/templates/lxc-debian
+ lxc-create -n <name> -t debian -- -r jessie
+
+ chroot /var/lib/lxc/<name>/rootfs/ passwd
+ sed -i 's/dhcp/manual/' /var/lib/lxc/<name>/etc/network/interfaces
+
+Now edit your /var/lib/lxc/<name>/config
+
+ lxc.start.auto = 1
+ lxc.network.type = veth
+ lxc.network.flags = up
+ lxc.network.link = lxc-bridge
+ lxc.network.name = eth0
+ lxc.network.ipv4 = 10.3.0.2
+ lxc.network.ipv4.gateway = 10.3.0.1
+
+Are things you can use for a NATted setup.
