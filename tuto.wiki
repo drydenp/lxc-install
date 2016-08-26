@@ -1,0 +1,159 @@
+== Tutorial on installing LXC using a bridged NAT setup ==
+
+It is also possible to set up your "vhost" using NAT.
+
+Network Address Translation requires that you create an inner network and an inner host that will speak through that network to your host (localhost, host system) as well as to the internet.
+
+=== Manual configuration of a NAT ===
+Suppose we determine in advance what addresses and devices we will use
+
+* We won't be using a "vlan" but we will be using a virtual interface to create a bridge out of
+* You can name this bridge whatever way you want, including "eth1"
+* Since we are doing NAT, we will assume that you only have a limited number of IP addresses available.
+
+This tutorial is geared toward having one (1) secondary IP for your containers and all subsequent containers. If you had plenty available, including a network with a DHCP server for those addresses, you wouldn't be needing NAT as you would already be on some internal host.
+
+I will make the following assumptions:
+* your primary ethernet device is eth0
+* your bridge will be called eth1
+* your internal network device will be called lxc-nat-bridge
+* you obtain your eth0 address through DHCP, or it already has an address configured.
+
+* The internal network will be a class A subnet called 10.3.0.0
+* Your internal interface address for this network will be 10.3.0.1
+* Your first container will be 10.3.0.2
+
+* You will have direct access to the internet but only over the secondary IP
+* All ports on the secondary IP will by default be forwarded to your container
+* Your container will have access to your localhost on that 10.3.0.1 address
+* Your container will have internet access to its own forwarded ports
+
+Let us first define the start of a script:
+
+ eth0=eth0
+ br=eth1
+ lxc=lxc-nat-bridge
+ lxc_sub=10.3.0.0
+ internal_ip=10.3.0.1
+ container_ip=10.3.0.2
+
+ main_ip=$( ip addr show dev $eth0 | grep "inet " | awk '{print $2}' )
+ secondary_ip=<pick here yourself>
+
+In case you didn't want a secondary IP, you wouldn't even need to create the first bridge, the LXC bridge would be sufficient.
+
+=== Overview ===
+
+ 
+    Primary interface (eth0) --> Virtual interface (eth0:1)    --> Bridge (eth1)
+              |                            |                             |
+           $main_ip                   used as port                  $secondary_ip
+
+
+At this point there is not even any mention of a container yet, you have just created a secondary virtual interface based on your single eth0 device.
+
+You can directly assign this to your eth0:1 virtual interface as well, but the benefit here is that you can rename your bridge, and you can't rename your eth0:1.
+
+    Container bridge (lxc-nat-bridge)  ----->   Container       -----> Second Container ....
+              |                                     |                          |
+          $internal_ip                         $container_ip              $second_container.....
+
+The eth0:1 is not a vlan. See the other tutorial for the vlan. Bridge-utils (the package we need to install the bridge and configure it) is said to be conflicting with the "vlan" package (or at least its use) and that you can't use both at the same time.
+
+    10.3.0.2   ---->   10.3.0.1  ---->   81.136.21.122   ---->   internet
+
+    internet  --->   81.136.21.122  ----> 10.3.0.1  ----> 10.3.0.2
+
+=== Firewall Rules ===
+
+The Firewall rules supreme here and it is needed. We use "iptables" of course.
+
+These are some basic forwarding rules:
+
+ iptables -t nat -A PREROUTING -i $br -d $secondary_ip -m conntrack --ctstate NEW -j DNAT --to-destination $container_ip
+ iptables -t nat -A PREROUTING -i $lxc -d $seconary_ip -m conntrack --ctstate NEW -j DNAT --to-destination $container_ip
+ iptables -t nat -A OUTPUT -d $secondary_ip -m conntrack --ctstate NEW -j DNAT --to-destination $container_ip
+
+These three rules give access to your port-forwarded ports for (a) external addresses  (b) the containers themselves and (c) your internal services and programs on localhost.
+
+==== Distinguishing local access ====
+
+I venture that the following rules may help distinguish when traffic originates locally and should thus be locally routed, not using the external IP:
+
+ iptables -t mangle -A OUTPUT -d $lxc_sub -m conntrack --ctstate NEW -j CONNMARK --or-mark 32
+ iptables -t mangle -A OUTPUT -d $internal_ip -m conntrack --ctstate NEW -j CONNMARK --set-mark 0/32
+ iptables -t mangle -A INPUT -s $lxc_sub -m conntrack --ctstate NEW -j CONNMARK --or-mark 32
+ iptables -t mangle -A INPUT -s $internal_ip -m conntrack --ctstate NEW -j CONNMARK --set-mark 0/32
+
+The connection-mark "32" (bit 6) will be set on traffic to and from actual containers, skipping the local interface itself. 
+
+==== Providing masquerading ====
+
+ iptables -t nat -A POSTROUTING -s $lxc_sub -o $lxc -m connmark ! --mark 32/32 -j SNAT --to-source $secondary_ip
+ iptables -t nat -A POSTROUTING -s $lxc_sub -o $br -j MASQUERADE
+
+To explain, any traffic going out the window (the second rule) should simply be masqueraded using that interface (your bridge device) at the external IP. That means that, if given a routing table to match it, your container will simply normally have access to all of your internal interfaces and possibly even VPN tunnels etc. if you want it. The second rule (the first here, the topmost) is what happens if your containers tries to access itself.
+
+I write containers because it might apply to all of them, if you have more. Picture your containers accessing an external port on the external IP. The first thing that happens is that the destination gets D-natted and its destination address rewritten to the required port-foward-destination-IP (and/or port) which might even be itself. At this point it will not get routed to the external IP anymore (or your external device, $br) but simply to the host from which it might possibly have originated. However, your container thinks it is communicating to $secondary_ip. So before the packet gets sent out to lxc-nat-bridge (10.3.0.1) to travel on towards 10.3.0.2 (for instance) we will rewrite its source address to conform to what it expected. Now your container finds a port being requested:
+
+ container source port (1024-65535)   --->  external IP (1-1023)  ------\
+                                                                        |
+ container destination port (1-1023)  <---  external IP (1024-65535)  <-/
+
+The PREROUTING DNAT exchanges external IP (1-1023) for container IP (1-1023) and the POSTROUTING SNAT exchanges container IP (1024-65535) for external IP (1024-65535) as it travels towards the destination.
+
+On return, the router/firewall will handle anything and we don't need to do anything else. The service on the container (such as Apache) thinks it is talking to $secondary_IP:1024-65535 (high port) while the client on the container (such as curl) thinks it is talking to $secondary_IP:1-1023 (low port).
+
+However if the mark is set (32) we know that "-s 10.3.0.0/24" and "-o lxc-nat-bridge" must indicate a service request from the localhost using its 10.3.0.1 interface to wards the container, happening internally. Unless that internal service request were happening towards $secondary_ip, no DNAT or SNAT would ever take place.
+
+If targetted at $secondary_ip there are two options:
+* normally the client targetting $secondary_ip uses $secondary_ip as a bind address for its own socket
+* a client requesting an explicit different socket or bind address will appear to be accessing a different interface/system.
+
+* The client using $secondary_ip will first see DNAT towards 10.3.0.2. This may change the destionation port, but not the local port. It is assumed that this is "passthrough" and of course since the server only needs to know the originating address:port, that is sufficient. The connection will be flagged by the mangle rule and SNAT will not take place.
+* The client using a different local IP will first see DNAT towards 10.3.0.2. The destination is changed but not the source. For some reason, the sender recognises that the packets being returned to it from 10.3.0.2 belong to its connection attempt with $secondary_ip.
+
+==== Hosts.allow ====
+
+To provide a little easy safety without requiring a firewall for that, we will also write some data into hosts.allow and hosts.deny.
+
+Hosts.allow:
+
+ ALL@$main_ip: ALL
+
+Will allow all services to be used when they are requested using that main IP as the destination.
+
+Hosts.deny:
+
+ ALL: ALL EXCEPT 127. [::1]/128 10.
+
+Would deny everything except for localhost (IPv4 and IPv6) and entire IPv4 10.x.x.x subnet, which is the Class A subnet that most VPNs and also our LXC subnet are on.
+That means all of that would be allowed by default, given these rule files.
+
+Of course on can specify limited access for certain services to the containers:
+
+Hosts.allow:
+
+ ALL@$main_ip: ALL
+ ssh@10.3.0.1: 10.3.0.
+
+Hosts.deny:
+
+ ALL: ALL EXCEPT 127. [::1]/128
+
+Although that would be rather pointless if you let everyone else access it from anywhere using the main IP (including your 10.3.0.x hosts). Regardless, you can do as you like. In general the /etc/hosts.allow and /etc/hosts.deny files are more trouble than they are worth, and often leave you with incredulous situations you don't know how to resolve because you think it must have something to do with the firewall or the router.
+
+One example of course would be that your Linux system tries to use [::1]/128 as the IPv6 address to access localhost and you will not be able to match it using 127.0.0.1. It would normally be better to have a limited set of denials, to name them explicitly, create exceptions for what you think is important, and then do your best to even allow them anyway in the allows file. A router is better suited (a firewall) to block things and also give you reports on what it blocked.
+
+So please just consider /etc/hosts.allow and /etc/hosts.deny the most convenient way to *quickly* block access to something, and nothing else.
+
+=== The missing element ===
+
+I have a script available that can create all of these rules and files for you with just a minimal amount of settings to make.
+
+Two things to note:
+
+* You may not use rp_filter (/proc/sys/net/ipv4/conf/*/rp_filter = 1) on a bridge device, or it will not work.
+* You must set your lxc-nat-bridge ($lxc) to promiscuous mode or it will not route certain packets that we need: <pre>ip link set promisc on dev $lxc</pre>
+
+Particularly it will fail to do the loopback thing where you can access your own routed services.
