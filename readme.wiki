@@ -1,20 +1,21 @@
-== Installing LXC on Debian Jessie (stable) as of August 2016 ==
+== Personal LXC installation compendium ==
 
- apt install -y lxc bridge-utils
- sed -i 's@MIRROR=${MIRROR:-http://http.debian.net/debian}@#&@' /usr/share/lxc/templates/lxc-debian
- lxc-create -n <name> -t debian -- -r jessie
+This page is comprised of 2-3 segments.
 
- chroot /var/lib/lxc/<name>/rootfs/ passwd
- sed -i 's/dhcp/manual/' /var/lib/lxc/<name>/etc/network/interfaces
+[[repo.wiki|Explanation of this repo]]
 
-Now edit your /var/lib/lxc/<name>/config
+[[bare.wiki|Quick install instructions for installing LXC on Debian Jessie]]
 
- lxc.start.auto = 1
- lxc.network.type = veth
- lxc.network.flags = up
- lxc.network.link = lxc-bridge
- lxc.network.name = eth0
- lxc.network.ipv4 = 10.3.0.2
- lxc.network.ipv4.gateway = 10.3.0.1
+[[tuto.wiki|Tutorial on how to configure LXC for NAT]]
 
-Are things you can use for a NATted setup.
+And then, the current file.
+
+The repo serves two purposes:
+* Automated installation script not only for initially installing the required firewall rules etc. (into /etc/network/interfaces mostly) but also to ''update'' the configuration after I've made central changes (in the script for it).
+* Education people on how to do this.
+
+The scripts are usable to anyone, but they will install into /root/fw (if you don't like that, fix it)
+and not all options are configurable (so you'd have to change that) but they still provide an easy way
+for anyone. To set this up easily.
+
+But the explanation for how it works, is most important I think. I am meaning to get something like this of a tutorial on the Debian wiki.
