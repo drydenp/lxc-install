@@ -114,7 +114,7 @@ allow-hotplug $virt
 iface lo inet loopback
 
 iface $eth0 inet dhcp
-  pre-up echo 1 > /proc/sys/net/ipv6/conf/$eth0/disable_ipv6
+  up echo 1 > /proc/sys/net/ipv6/conf/$eth0/disable_ipv6
 
 iface $virt inet manual
 
@@ -124,11 +124,13 @@ iface $br inet static
   address $secondary_ip
   netmask 255.255.255.0
 
-  pre-up echo 1 > /proc/sys/net/ipv6/conf/$br/disable_ipv6
-
   # This thing may be coming online too fast for its own good:
-    
+
   pre-up sleep 5s; ip addr show dev $eth0 | grep "inet " || sleep 10s
+
+  # An improvement, for sure?
+
+  up echo 1 > /proc/sys/net/ipv6/conf/$br/disable_ipv6
 
   # there are two choices to take care of routing the outgoing traffic of the
   # container over our $secondary_ip. One is to only add the default route for it
@@ -157,13 +159,14 @@ iface $lxc inet static
   address $internal_ip
   netmask 255.255.255.0
 
-  # Make life a little easier:
-  pre-up echo 1 > /proc/sys/net/ipv6/conf/$lxc/disable_ipv6
-
   # Wait here too:
 
   pre-up while ! ip addr show dev $br | grep "inet "; do sleep 1s; done
 
+  # Make life a little easier:
+
+  up echo 1 > /proc/sys/net/ipv6/conf/$lxc/disable_ipv6
+ 
   # Since this interface creates a new route we once more copy it over to the
   # second table.
 
