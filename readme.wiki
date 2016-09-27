@@ -2,9 +2,9 @@
 
 This page is comprised of 2-3 segments.
 
-# [[repo.wiki|Explanation of this repo]]
-# [[bare.wiki|Quick install instructions for installing LXC on Debian Jessie]]
-# [[tuto.wiki|Tutorial on how to configure LXC for NAT]]
+# [[wiki/repo.wiki|Explanation of this repo]]
+# [[wiki/bare.wiki|Quick install instructions for installing LXC on Debian Jessie]]
+# [[wiki/tuto.wiki|Tutorial on how to configure LXC for NAT]]
 
 And then, the current file.
 

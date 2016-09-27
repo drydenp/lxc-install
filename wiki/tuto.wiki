@@ -44,7 +44,7 @@ In case you didn't want a secondary IP, you wouldn't even need to create the fir
 
 === Overview ===
 
- 
+
     Primary interface (eth0) --> Virtual interface (eth0:1)    --> Bridge (eth1)
               |                            |                             |
            $main_ip                   used as port                  $secondary_ip
@@ -85,7 +85,7 @@ I venture that the following rules may help distinguish when traffic originates 
  iptables -t mangle -A INPUT -s $lxc_sub -m conntrack --ctstate NEW -j CONNMARK --or-mark 32
  iptables -t mangle -A INPUT -s $internal_ip -m conntrack --ctstate NEW -j CONNMARK --set-mark 0/32
 
-The connection-mark "32" (bit 6) will be set on traffic to and from actual containers, skipping the local interface itself. 
+The connection-mark "32" (bit 6) will be set on traffic to and from actual containers, skipping the local interface itself.
 
 ==== Providing masquerading ====
 
