@@ -106,8 +106,11 @@ echo
 
 # The following sets up hosts.allow and hosts.deny in reverse order.
 
-$config_do /etc/hosts.deny "ALL: ALL EXCEPT 127. [::1]/128 10."   # deny all except localhost and 10.*
-$config_do /etc/hosts.allow "ALL@${primary_ip}: ALL"        # allow requests targetting the primary IP
+$config_do /etc/hosts.deny "ALL: ALL EXCEPT 127. [::1]/128 10. 192.168."
+    # deny all except localhost and 10.* and 192.168.*
+
+$config_do /etc/hosts.allow "ALL@${primary_ip}: ALL"
+    # allow requests targetting the primary IP
 
 # The result is that the secondary IP cannot be used to host services by the host, but only by the
 # container(s). Just a protection measure to more clearly separate the systems from one another.
