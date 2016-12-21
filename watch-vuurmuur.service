@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch Vuurmuur for changes.
+
+[Service]
+ExecStart=/usr/local/sbin/watch_vuurmuur_audit_log.sh &
+
+[Install]
+WantedBy=default.target
