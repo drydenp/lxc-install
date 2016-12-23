@@ -62,9 +62,6 @@ container_ip=${lxc_sub%.0/*}.2  # <-- our (only) container gets the second.
 
 # SECONDARY_IP and LXC_SUB are substituted using a template file.
 
-second_table_name=second        # <-- name of second routing table.
-second_table_number=2			# <-- number of second routing table.
-
 # The resulting file can generate /etc/network/interfaces directly.
 
 # ---------------------------------------------------------------------------- #
@@ -137,35 +134,30 @@ second_table_number=2			# <-- number of second routing table.
 # It denies all traffic as INPUT on the secondary IP by first disallowing it and then
 # granting it only to the primary IP.
    
-$config_do /etc/hosts.deny "ALL: ALL EXCEPT 127. [::1]/128 10. 192.168."
+$config_do /etc/hosts.deny "ALL @${secondary_ip}: ALL"
+$config_do /etc/hosts.deny "nfsd, portmap @{primary_ip}: ALL"
 
 # Localhost, IPv6 localhost, 10.x.x.x and 192.168.x.x are not denied anything.
 
-$config_do /etc/hosts.allow "ALL EXCEPT nfsd, rpcbind @${primary_ip}: ALL"
+$config_do /etc/hosts.allow "ALL EXCEPT nfsd portmap @${primary_ip}: ALL"
 
 # The primary IP is allowed everything except nfs and the port mapper (2049 and 111)
 # The UDP port mapper (sunrpc, or /sbin/rpcbind) are used for DDoS amplification.
 
-# The result is better isolation between systems. No service on this host should run
-# on the secondary IP and if it does, it is now unreachable... well, if it uses the
-# TCP wrapper, that is.
 
-# ---------------------------------------------------------------------------- #
 
-# This adds the second table as a name "second":
+
+
    
-$config_do /etc/iproute2/rt_tables "$(printf "$second_table_number\t$second_table_name")"
+   # The result is that the secondary IP cannot be used to host services by the host, but only by the
+   # container(s). Just a protection measure to more clearly separate the systems from one another.
    
-# ---------------------------------------------------------------------------- #
-
-   [ $remove ] && exit    # If only we removed stuff, do not write interfaces file.
+   $config_do /etc/iproute2/rt_tables "$(printf "2\tsecond")"      # create a name for the second table.
+   
+   [ $remove ] && exit            # exit now if you only removed stuff.
    
    echo
-   [ $verbose ] && {
-	   asfollows=" as follows"; devnull=;
-   } || {
-	   asfollows=; devnull="> /dev/null";
-   }
+   [ $verbose ] && { asfollows=" as follows"; devnull=; } || { asfollows=; devnull="> /dev/null"; }
    
    echo "Recreating /etc/network/interfaces${asfollows}. Hope it works."
    [ $verbose ] && {
@@ -239,14 +231,14 @@ iface $alias1 inet static
   
   # The new default route for the second table:
 
-  up ip route add default via $secondary_gateway dev $base1 table $second_table_name
+  up ip route add default via $secondary_gateway dev $base1 table $second_table
 
   # The rule that ensures routing (rare occasion):
 
-  up ip rule add from $secondary_ip lookup $second_table_name
-  down ip rule del from $secondary_ip lookup $second_table_name
+  up ip rule add from $secondary_ip lookup second
+  down ip rule del from $secondary_ip lookup second
 
-  down ip route flush table $second_table_name
+  down ip route flush table second
 
   # At this point we have not created the exceptions yet (for 10.0.0.0 / 192.168.0.0) but
   # our LXC is not up yet.
@@ -257,7 +249,7 @@ iface $lxc inet static
   bridge_ports none
   bridge_fd 0
   address $internal_ip
-  netmask 255.255.255.0
+  netmask 255.255.255.0            # <-- if you need more addresses, fix this.
 
   # Another waiting event:
 
@@ -267,17 +259,13 @@ iface $lxc inet static
  
   # Earlier update of the second routing table:
 
-  # up ip route show | grep "^$lxc_sub" | { read line; ip route add \$line table $second_table_name; }
+  # up ip route show | grep "^$lxc_sub" | { read line; ip route add \$line table second; }
 
   # Now the real rules that are very much required:
 
-  up echo "Adding the three rules."
-
-  up ip rule add from $lxc_sub lookup $second_table_name           # <-- default route for $lxc
+  up ip rule add from $lxc_sub lookup second                  # <-- default route for $lxc
   up ip rule add from all to 10.0.0.0/8 lookup main           # <-- other stuff uses
   up ip rule add from all to 192.168.0.0/16 lookup main       # <-- the main table
-
-  up echo "Adding the filter rules"
 
   # These are just some sample rules you can use if you don't want external traffic to be
   # routed over your VPN or similar. And if your default policy is drop:
@@ -290,15 +278,11 @@ iface $lxc inet static
   # A list of port forwards. These are "forward all" for external traffic, container-originated traffic
   # and locally generated traffic.
 
-  up echo "Adding the port forwarding rules."
-
   up iptables -t nat -A PREROUTING -i $base1 -d $secondary_ip -m conntrack --ctstate NEW -j DNAT --to-destination $container_ip
   up iptables -t nat -A PREROUTING -i $lxc -d $secondary_ip -m conntrack --ctstate NEW -j DNAT --to-destination $container_ip
   up iptables -t nat -A OUTPUT -d $secondary_ip -m conntrack --ctstate NEW -j DNAT --to-destination $container_ip
   
   # We flag container traffic so as to avoid natting it later on:
-
-  up echo "Adding the mangle rules."
 
   up iptables -t mangle -A INPUT -s $lxc_sub -m conntrack --ctstate NEW -j CONNMARK --or-mark $connmark
   up iptables -t mangle -A OUTPUT -d $lxc_sub -m conntrack --ctstate NEW -j CONNMARK --or-mark $connmark
@@ -311,8 +295,6 @@ iface $lxc inet static
   # To ensure it looks like external traffic, so the container is not suddenly connected directly
   # to itself without it expecting such a thing, I also change the source address to the external IP.
 
-  up echo "Adding the remaining SNAT/MASQ rules"
-
   up iptables -t nat -A POSTROUTING -s $lxc_sub -o $lxc -m connmark ! --mark $connmark/$connmark -j SNAT --to-source $secondary_ip
 
   # The benefit is that the container can use its own port-forwarded ports on the external address without
@@ -324,15 +306,13 @@ iface $lxc inet static
 
   # I do not know if the following is still required. But I think it is:
 
-  up echo "Setting promiscuous mode."
-
   up ip link set promisc on dev $lxc     # <-- may be required for container-to-container forwards.
 
   # Upon link down I am not going to remove those firewall rules.
 
   down ip rule del from all to 192.168.0.0/16 lookup main
   down ip rule del from all to 10.0.0.0/8 lookup main
-  down ip rule del from $lxc_sub lookup $second_table_name
+  down ip rule del from $lxc_sub lookup second
 
 EOF
 
